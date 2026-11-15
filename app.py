@@ -16,9 +16,6 @@ COLUMNS = [
     "Netto-GuV ($)", "Rendite auf Kapital (%)", "Notizen"
 ]
 
-# ==========================================
-# --- DATEN LADEN & SPEICHERN ---
-# ==========================================
 def load_trades():
     if os.path.exists(DATA_FILE):
         try:
@@ -36,9 +33,6 @@ def save_trades(df):
 if "trades_df" not in st.session_state:
     st.session_state.trades_df = load_trades()
 
-# ==========================================
-# --- INTELLIGENTER CAPTRADER PARSER ---
-# ==========================================
 def get_col(row, candidates, default=""):
     for c in candidates:
         if c in row and pd.notna(row[c]):
@@ -46,7 +40,7 @@ def get_col(row, candidates, default=""):
     return default
 
 def format_ib_date(raw_val):
-    s = str(raw_val).split(";").split(",").strip()
+    s = str(raw_val).split(";")[0].split(",")[0].strip()
     if len(s) == 8 and s.isdigit():
         return f"{s[:4]}-{s[4:6]}-{s[6:]}"
     return s
@@ -78,7 +72,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split().upper() if ticker_raw else ""
+        ticker = ticker_raw.split()[0].upper() if ticker_raw else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -172,9 +166,6 @@ def parse_captrader_csv(uploaded_csv, existing_df):
 
     return pd.DataFrame(imported_rows), raw_df
 
-# ==========================================
-# --- SIDEBAR: IMPORT, RESET & BACKUP ---
-# ==========================================
 st.sidebar.header("🏦 CapTrader Import")
 clear_before_import = st.sidebar.checkbox("Vor Import alte Daten löschen", value=True)
 ct_file = st.sidebar.file_uploader("CapTrader Flex-Query CSV hochladen", type=["csv"], key="ct_up")
@@ -228,9 +219,6 @@ if uploaded_file is not None:
         except Exception as e:
             st.sidebar.error(f"Fehler: {e}")
 
-# ==========================================
-# --- KPI-ÜBERSICHT (KENNZAHLEN) ---
-# ==========================================
 df = st.session_state.trades_df
 
 total_pnl = df["Netto-GuV ($)"].sum() if not df.empty else 0.0
@@ -247,12 +235,21 @@ c4.metric("🎯 Trefferquote (Geschlossen)", f"{win_rate:.1f} %")
 
 st.divider()
 
-# ==========================================
-# --- REITER: VERWALTUNG / NEUER TRADE / CHART ---
-# ==========================================
 tab1, tab2, tab3 = st.tabs(["📋 Alle Trades & Schließen", "➕ Neuen Trade eintragen", "📈 Auswertung"])
 
 with tab1:
     if df.empty:
         st.info("Datenbank ist aktuell leer. Importiere links deine neue CapTrader CSV-Datei ab November.")
     else:
+        st.subheader("Aktuelle Übersicht")
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+        st.subheader("🔄 Offenen Trade manuell schließen / abrechnen")
+        open_list = df[df["Status"] == "Offen"]
+        
+        if open_list.empty:
+            st.write("Aktuell sind keine offenen Trades vorhanden.")
+        else:
+            c_sel, c_stat, c_buyback, c_date = st.columns(4)
+            trade_options = {f"ID {row['ID']} | {row['Ticker']} {row['Strategie']} (Strike {row['Strike']})": row["ID"] for _, row in open_list.iterrows()}
+            
