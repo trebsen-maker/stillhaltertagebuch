@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-from datetime import date
+from datetime import date, datetime
 
 st.set_page_config(page_title="Stillhalter Trading-Tagebuch", layout="wide")
 st.title("📓 Stillhalter Trading-Tagebuch & CapTrader-Importer")
@@ -37,7 +37,7 @@ if "trades_df" not in st.session_state:
     st.session_state.trades_df = load_trades()
 
 # ==========================================
-# --- FLEXIBLER CAPTRADER PARSER (DE & EN) ---
+# --- INTELLIGENTER CAPTRADER PARSER ---
 # ==========================================
 def get_col(row, candidates, default=""):
     for c in candidates:
@@ -45,20 +45,23 @@ def get_col(row, candidates, default=""):
             return row[c]
     return default
 
+def format_ib_date(raw_val):
+    s = str(raw_val).split(";")[0].split(",")[0].strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s
+
 def parse_captrader_csv(uploaded_csv):
-    # Trennzeichen automatisch erkennen (, oder ;)
     uploaded_csv.seek(0)
     sample = uploaded_csv.read(2048).decode("utf-8", errors="ignore")
     sep = ";" if sample.count(";") > sample.count(",") else ","
     uploaded_csv.seek(0)
     
     raw_df = pd.read_csv(uploaded_csv, sep=sep)
-    
-    # Spaltennamen bereinigen
     raw_df.columns = [c.strip().strip('"') for c in raw_df.columns]
 
-    imported_rows = []
-    current_max_id = int(st.session_state.trades_df["ID"].max()) if not st.session_state.trades_df.empty else 0
+    opens = []
+    closes = []
 
     for _, r in raw_df.iterrows():
         asset = str(get_col(r, ["AssetClass", "Anlageklasse"], "OPT")).strip().upper()
@@ -88,54 +91,88 @@ def parse_captrader_csv(uploaded_csv):
         except ValueError:
             continue
 
-        # Datum formatieren
-        raw_date = str(get_col(r, ["TradeDate", "Handelsdatum"], str(date.today()))).split(";")[0].split(",")[0].strip()
-        if len(raw_date) == 8 and raw_date.isdigit():
-            open_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
-        else:
-            open_date = raw_date
+        t_date = format_ib_date(get_col(r, ["TradeDate", "Handelsdatum"], str(date.today())))
+        exp_date = format_ib_date(get_col(r, ["Expiry", "Verfallsdatum"], str(date.today())))
+        open_close = str(get_col(r, ["Open/CloseIndicator", "Eröffnungs-/Schließungsindikator"], "")).strip().upper()
 
-        raw_exp = str(get_col(r, ["Expiry", "Verfallsdatum"], str(date.today()))).strip()
-        if len(raw_exp) == 8 and raw_exp.isdigit():
-            exp_date = f"{raw_exp[:4]}-{raw_exp[4:6]}-{raw_exp[6:]}"
-        else:
-            exp_date = raw_exp
+        trade_obj = {
+            "ticker": ticker,
+            "put_call": put_call[:1] if put_call else "",
+            "strike": strike,
+            "expiry": exp_date,
+            "date": t_date,
+            "contracts": int(abs(qty)),
+            "price": price,
+            "comm": comm,
+            "used": False
+        }
 
-        contracts = int(abs(qty))
-        open_close = str(get_col(r, ["Open/CloseIndicator", "Eröffnungs-/Schließungsindikator"], "O")).strip().upper()
-
-        if put_call.startswith("P"):
-            strat = "Cash Secured Put (CSP)"
-        elif put_call.startswith("C"):
-            strat = "Covered Call (CC)"
-        else:
-            strat = "Option (Sonstige)"
-
-        # Verkäufe (Short-Eröffnungen) übernehmen
+        # Unterscheidung: Short-Eröffnung vs. Rückkauf/Schließung
         if qty < 0 and open_close in ["O", "OPEN", "E", "NAN", ""]:
-            current_max_id += 1
-            gross_prem = contracts * 100 * price
-            net_pnl = gross_prem - comm
-            cap_req = contracts * 100 * strike
-            roc = (net_pnl / cap_req * 100) if cap_req > 0 else 0.0
+            opens.append(trade_obj)
+        elif qty > 0 or open_close in ["C", "CLOSE", "S"]:
+            closes.append(trade_obj)
 
-            imported_rows.append({
-                "ID": current_max_id,
-                "Eröffnungsdatum": open_date,
-                "Ticker": ticker,
-                "Strategie": strat,
-                "Kontrakte": contracts,
-                "Strike": strike,
-                "Verfall": exp_date,
-                "Prämie pro Aktie": round(price, 3),
-                "Gebühren ($)": round(comm, 2),
-                "Status": "Offen",
-                "Schließungsdatum": "-",
-                "Rückkauf pro Aktie": 0.0,
-                "Netto-GuV ($)": round(net_pnl, 2),
-                "Rendite auf Kapital (%)": round(roc, 2),
-                "Notizen": "CapTrader Import"
-            })
+    # Nach Datum sortieren, damit Zuordnung chronologisch stimmt
+    opens.sort(key=lambda x: x["date"])
+    closes.sort(key=lambda x: x["date"])
+
+    imported_rows = []
+    current_max_id = int(st.session_state.trades_df["ID"].max()) if not st.session_state.trades_df.empty else 0
+    today_str = str(date.today())
+
+    for op in opens:
+        current_max_id += 1
+        strat = "Cash Secured Put (CSP)" if op["put_call"] == "P" else ("Covered Call (CC)" if op["put_call"] == "C" else "Option (Sonstige)")
+        
+        # Passenden Rückkauf suchen (gleicher Ticker, Put/Call, Strike, Verfall)
+        matched_close = None
+        for cl in closes:
+            if (not cl["used"] and cl["ticker"] == op["ticker"] and 
+                cl["put_call"] == op["put_call"] and cl["strike"] == op["strike"] and 
+                cl["expiry"] == op["expiry"] and cl["date"] >= op["date"]):
+                matched_close = cl
+                cl["used"] = True
+                break
+
+        if matched_close:
+            status = "Vorzeitig zurückgekauft"
+            close_date = matched_close["date"]
+            buyback_price = matched_close["price"]
+            total_comm = op["comm"] + matched_close["comm"]
+            net_pnl = (op["contracts"] * 100 * (op["price"] - buyback_price)) - total_comm
+        else:
+            total_comm = op["comm"]
+            buyback_price = 0.0
+            # Prüfen, ob Verfallsdatum bereits vorbei ist
+            if op["expiry"] < today_str:
+                status = "Wertlos verfallen"
+                close_date = op["expiry"]
+            else:
+                status = "Offen"
+                close_date = "-"
+            net_pnl = (op["contracts"] * 100 * op["price"]) - total_comm
+
+        cap_req = op["contracts"] * 100 * op["strike"]
+        roc = (net_pnl / cap_req * 100) if cap_req > 0 else 0.0
+
+        imported_rows.append({
+            "ID": current_max_id,
+            "Eröffnungsdatum": op["date"],
+            "Ticker": op["ticker"],
+            "Strategie": strat,
+            "Kontrakte": op["contracts"],
+            "Strike": op["strike"],
+            "Verfall": op["expiry"],
+            "Prämie pro Aktie": round(op["price"], 3),
+            "Gebühren ($)": round(total_comm, 2),
+            "Status": status,
+            "Schließungsdatum": close_date,
+            "Rückkauf pro Aktie": round(buyback_price, 3),
+            "Netto-GuV ($)": round(net_pnl, 2),
+            "Rendite auf Kapital (%)": round(roc, 2),
+            "Notizen": "CapTrader Import"
+        })
 
     return pd.DataFrame(imported_rows), raw_df
 
@@ -151,11 +188,10 @@ if ct_file is not None:
             if not new_ct_df.empty:
                 updated_df = pd.concat([st.session_state.trades_df, new_ct_df], ignore_index=True)
                 save_trades(updated_df)
-                st.sidebar.success(f"✅ {len(new_ct_df)} Trades importiert & gespeichert!")
+                st.sidebar.success(f"✅ {len(new_ct_df)} Trades importiert & automatisch abgeglichen!")
                 st.rerun()
             else:
-                st.sidebar.warning("0 Short-Options-Eröffnungen gefunden. Prüfe die Vorschau unten.")
-                st.write("### 🔍 Vorschau deiner hochgeladenen CapTrader-Datei (erste 5 Zeilen):")
+                st.sidebar.warning("0 Short-Options-Eröffnungen gefunden.")
                 st.dataframe(raw_preview.head(5))
         except Exception as e:
             st.sidebar.error(f"Fehler beim Import: {e}")
@@ -206,7 +242,7 @@ c4.metric("🎯 Trefferquote (Geschlossen)", f"{win_rate:.1f} %")
 st.divider()
 
 # ==========================================
-# --- REITER: NEUER TRADE / VERWALTUNG / CHART ---
+# --- REITER: VERWALTUNG / NEUER TRADE / CHART ---
 # ==========================================
 tab1, tab2, tab3 = st.tabs(["📋 Alle Trades & Schließen", "➕ Neuen Trade eintragen", "📈 Auswertung"])
 
@@ -216,27 +252,4 @@ with tab1:
     else:
         st.subheader("Aktuelle Übersicht")
         st.dataframe(df, hide_index=True, use_container_width=True)
-
-        st.subheader("🔄 Offenen Trade schließen / abrechnen")
-        open_list = df[df["Status"] == "Offen"]
-        
-        if open_list.empty:
-            st.write("Aktuell sind keine offenen Trades vorhanden.")
-        else:
-            c_sel, c_stat, c_buyback, c_date = st.columns(4)
-            trade_options = {f"ID {row['ID']} | {row['Ticker']} {row['Strategie']} (Strike {row['Strike']})": row["ID"] for _, row in open_list.iterrows()}
-            
-            selected_label = c_sel.selectbox("Trade auswählen", list(trade_options.keys()))
-            selected_id = trade_options[selected_label]
-            
-            close_status = c_stat.selectbox("Ergebnis", ["Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)"])
-            buyback_price = c_buyback.number_input("Rückkaufpreis pro Aktie ($)", min_value=0.0, value=0.0, step=0.05)
-            close_date = c_date.date_input("Schließungsdatum", value=date.today())
-
-            if st.button("💾 Trade-Abschluss speichern"):
-                idx = df[df["ID"] == selected_id].index
-                contracts = df.loc[idx, "Kontrakte"]
-                open_prem = df.loc[idx, "Prämie pro Aktie"]
-                fees = df.loc[idx, "Gebühren ($)"]
-                strike = df.loc[idx, "Strike"]
 
