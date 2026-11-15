@@ -40,8 +40,17 @@ def get_col(row, candidates, default=""):
             return row[c]
     return default
 
+def to_float(val, default=0.0):
+    try:
+        s = str(val).strip().replace('"', '').replace(",", ".")
+        if s == "" or s.lower() == "nan":
+            return default
+        return float(s)
+    except Exception:
+        return default
+
 def format_ib_date(raw_val):
-    s = str(raw_val).strip()
+    s = str(raw_val).strip().replace('"', '')
     if "." in s and s.replace(".", "").isdigit():
         s = next(iter(s.split(".")), s)
     digits = re.sub(r"\D", "", s)
@@ -64,39 +73,36 @@ def parse_captrader_csv(uploaded_csv, existing_df):
     sep = ";" if sample.count(";") > sample.count(",") else ","
     uploaded_csv.seek(0)
     
-    raw_df = pd.read_csv(uploaded_csv, sep=sep)
+    raw_df = pd.read_csv(uploaded_csv, sep=sep, dtype=str).fillna("")
     raw_df.columns = [c.strip().strip('"') for c in raw_df.columns]
 
     opens = []
     closes = []
+    stk_count = 0
+    opt_count = 0
 
     for _, r in raw_df.iterrows():
-        asset = str(get_col(r, ["AssetClass", "Anlageklasse"], "OPT")).strip().upper()
+        asset = str(get_col(r, ["AssetClass", "Anlageklasse"], "")).strip().upper()
+        if asset == "STK":
+            stk_count += 1
+            continue
         if asset not in ["OPT", "OPTIONEN", "OPTIONS", ""]:
             continue
 
-        qty_raw = str(get_col(r, ["Quantity", "Menge"], "0")).replace(",", ".")
-        try:
-            qty = float(qty_raw)
-        except ValueError:
-            continue
-
+        qty = to_float(get_col(r, ["Quantity", "Menge"], "0"))
         if qty == 0:
             continue
 
+        opt_count += 1
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
         ticker = next(iter(ticker_raw.split()), "").upper()
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
         put_call = str(get_col(r, ["Put/Call", "Put/Call-Indikator"], "")).strip().upper()
-        
-        try:
-            strike = float(str(get_col(r, ["Strike", "Ausübungspreis"], "0")).replace(",", "."))
-            price = abs(float(str(get_col(r, ["TradePrice", "Handelspreis"], "0")).replace(",", ".")))
-            comm = abs(float(str(get_col(r, ["IBCommission", "IB-Provision", "Gebühren"], "0")).replace(",", ".")))
-        except ValueError:
-            continue
+        strike = to_float(get_col(r, ["Strike", "Ausübungspreis"], "0"))
+        price = abs(to_float(get_col(r, ["TradePrice", "Handelspreis"], "0")))
+        comm = abs(to_float(get_col(r, ["IBCommission", "IB-Provision", "Gebühren"], "0")))
 
         t_date = format_ib_date(get_col(r, ["TradeDate", "Handelsdatum"], str(date.today())))
         exp_date = format_ib_date(get_col(r, ["Expiry", "Verfallsdatum"], str(date.today())))
@@ -177,7 +183,8 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             "Notizen": "CapTrader Import"
         })
 
-    return pd.DataFrame(imported_rows), raw_df
+    info_msg = f"Datei geprüft: {opt_count} Options-Zeilen & {stk_count} Aktien-Zeilen (STK) gefunden."
+    return pd.DataFrame(imported_rows), info_msg
 
 st.sidebar.header("🏦 CapTrader Import")
 clear_before_import = st.sidebar.checkbox("Vor Import alte Daten löschen", value=True)
@@ -187,15 +194,15 @@ if ct_file is not None:
     if st.sidebar.button("📥 CapTrader Trades übernehmen", type="primary", use_container_width=True):
         try:
             base_df = pd.DataFrame(columns=COLUMNS) if clear_before_import else st.session_state.trades_df
-            new_ct_df, raw_preview = parse_captrader_csv(ct_file, base_df)
+            new_ct_df, info_text = parse_captrader_csv(ct_file, base_df)
+            st.sidebar.info(info_text)
             if not new_ct_df.empty:
                 updated_df = pd.concat([base_df, new_ct_df], ignore_index=True)
                 save_trades(updated_df)
-                st.sidebar.success(f"✅ {len(new_ct_df)} Trades importiert!")
+                st.sidebar.success(f"✅ {len(new_ct_df)} Options-Trades importiert!")
                 st.rerun()
             else:
-                st.sidebar.warning("0 Short-Options-Eröffnungen gefunden.")
-                st.dataframe(raw_preview.head(5))
+                st.sidebar.warning("Keine offenen/abgeschlossenen Short-Optionen (OPT) in dieser Datei gefunden.")
         except Exception as e:
             st.sidebar.error(f"Fehler beim Import: {e}")
 
@@ -254,11 +261,3 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-    if st.button("🗑️ Datenbank komplett leeren (Reset)"):
-        save_trades(pd.DataFrame(columns=COLUMNS))
-        st.rerun()
-
-    if df.empty:
-        st.info("Datenbank ist aktuell leer. Bitte lade links deine CapTrader CSV-Datei hoch.")
-    else:
-        display_df = df.copy()
