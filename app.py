@@ -43,7 +43,7 @@ def get_col(row, candidates, default=""):
 def format_ib_date(raw_val):
     s = str(raw_val).strip()
     if "." in s and s.replace(".", "").isdigit():
-        s = s.split(".")[0]
+        s = s.split(".")
     digits = re.sub(r"\D", "", s)
     if len(digits) >= 8:
         return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
@@ -76,7 +76,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split()[0].upper() if ticker_raw else ""
+        ticker = ticker_raw.split().upper() if ticker_raw else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -220,7 +220,7 @@ if uploaded_file is not None:
             st.sidebar.error(f"Fehler: {e}")
 
 # ==========================================
-# --- KPI-ÜBERSICHT & RESET ---
+# --- KPI-ÜBERSICHT ---
 # ==========================================
 df = st.session_state.trades_df
 
@@ -239,9 +239,9 @@ c4.metric("🎯 Trefferquote (Geschlossen)", f"{win_rate:.1f} %")
 st.divider()
 
 # ==========================================
-# --- REITER: VERWALTUNG / NEUER TRADE / CHART ---
+# --- REITER: ÜBERSICHT / NEUER TRADE / AUSWERTUNG ---
 # ==========================================
-tab1, tab2, tab3 = st.tabs(["📋 Alle Trades & Schließen", "➕ Neuen Trade eintragen", "📈 Auswertung"])
+tab1, tab2, tab3 = st.tabs(["📋 Alle Trades", "➕ Neuen Trade eintragen", "📈 Monatliche Auswertung"])
 
 with tab1:
     col_head, col_reset = st.columns([3, 1])
@@ -253,8 +253,9 @@ with tab1:
             st.rerun()
 
     if df.empty:
-        st.info("Datenbank ist aktuell leer. Importiere links deine neue CapTrader CSV-Datei ab November.")
+        st.info("Datenbank ist aktuell leer. Importiere links deine CapTrader CSV-Datei.")
     else:
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(df, hide_index=True, use_container_width=True, height=600)
 
-        st.subheader("🔄 Offenen Trade manuell schließen / abrechnen")
+with tab2:
+    with st.form("new_trade_form", clear_on_submit=True):
