@@ -51,8 +51,6 @@ def to_float(val, default=0.0):
 
 def format_ib_date(raw_val):
     s = str(raw_val).strip().replace('"', '')
-    if "." in s and s.replace(".", "").isdigit():
-        s = next(iter(s.split(".")), s)
     digits = re.sub(r"\D", "", s)
     if len(digits) >= 8:
         return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
@@ -94,8 +92,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         opt_count += 1
-        ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = next(iter(ticker_raw.split()), "").upper()
+        ticker = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip().upper()
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -183,7 +180,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             "Notizen": "CapTrader Import"
         })
 
-    info_msg = f"Datei geprüft: {opt_count} Options-Zeilen & {stk_count} Aktien-Zeilen (STK) gefunden."
+    info_msg = f"Gelesen: {len(raw_df)} Zeilen ({opt_count} OPT, {stk_count} STK)."
     return pd.DataFrame(imported_rows), info_msg
 
 st.sidebar.header("🏦 CapTrader Import")
@@ -199,10 +196,9 @@ if ct_file is not None:
             if not new_ct_df.empty:
                 updated_df = pd.concat([base_df, new_ct_df], ignore_index=True)
                 save_trades(updated_df)
-                st.sidebar.success(f"✅ {len(new_ct_df)} Options-Trades importiert!")
-                st.rerun()
+                st.sidebar.success(f"✅ {len(new_ct_df)} Options-Trades übernommen!")
             else:
-                st.sidebar.warning("Keine Short-Optionen (OPT) gefunden.")
+                st.sidebar.warning("0 Short-Options-Eröffnungen gefunden.")
         except Exception as e:
             st.sidebar.error(f"Fehler beim Import: {e}")
 
@@ -226,7 +222,6 @@ if uploaded_file is not None:
             if set(COLUMNS).issubset(loaded_df.columns):
                 save_trades(loaded_df)
                 st.sidebar.success("Tagebuch geladen!")
-                st.rerun()
             else:
                 st.sidebar.error("Falsches Dateiformat.")
         except Exception as e:
@@ -262,3 +257,9 @@ ansicht = st.radio(
 
 st.divider()
 
+if ansicht.startswith("📋"):
+    if st.button("🗑️ Datenbank komplett leeren (Reset)"):
+        save_trades(pd.DataFrame(columns=COLUMNS))
+        st.rerun()
+
+    if df.empty:
