@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 
 st.set_page_config(page_title="Stillhalter Trading-Tagebuch", layout="wide")
 st.title("📓 Stillhalter Trading-Tagebuch & CapTrader-Importer")
@@ -43,11 +43,20 @@ def get_col(row, candidates, default=""):
 def format_ib_date(raw_val):
     s = str(raw_val).strip()
     if "." in s and s.replace(".", "").isdigit():
-        s = s.split(".")[0]
+        s = s.split(".")
     digits = re.sub(r"\D", "", s)
     if len(digits) >= 8:
         return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
     return s
+
+def calc_dte(exp_str, status_str):
+    if str(status_str).strip() != "Offen":
+        return None
+    try:
+        exp_dt = datetime.strptime(str(exp_str).strip()[:10], "%Y-%m-%d").date()
+        return (exp_dt - date.today()).days
+    except Exception:
+        return None
 
 def parse_captrader_csv(uploaded_csv, existing_df):
     uploaded_csv.seek(0)
@@ -76,7 +85,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split()[0].upper() if ticker_raw else ""
+        ticker = ticker_raw.split().upper() if ticker_raw else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -252,9 +261,4 @@ with tab1:
     if df.empty:
         st.info("Datenbank ist aktuell leer. Bitte lade links deine CapTrader CSV-Datei hoch.")
     else:
-        st.dataframe(df, hide_index=True, use_container_width=True, height=600)
-
-with tab2:
-    with st.form("new_trade_form", clear_on_submit=True):
-        t_open_date = st.date_input("Eröffnungsdatum", value=date.today())
-        t_ticker = st.text_input("Ticker-Symbol (z. B. AAPL, AAL)").upper().strip()
+        display_df = df.copy()
