@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
+import re
 from datetime import date
 
 st.set_page_config(page_title="Stillhalter Trading-Tagebuch", layout="wide")
@@ -40,9 +41,12 @@ def get_col(row, candidates, default=""):
     return default
 
 def format_ib_date(raw_val):
-    s = str(raw_val).split(";")[0].split(",")[0].strip()
-    if len(s) == 8 and s.isdigit():
-        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    s = str(raw_val).strip()
+    if "." in s and s.replace(".", "").isdigit():
+        s = s.split(".")[0]
+    digits = re.sub(r"\D", "", s)
+    if len(digits) >= 8:
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
     return s
 
 def parse_captrader_csv(uploaded_csv, existing_df):
@@ -166,6 +170,9 @@ def parse_captrader_csv(uploaded_csv, existing_df):
 
     return pd.DataFrame(imported_rows), raw_df
 
+# ==========================================
+# --- SIDEBAR: IMPORT & BACKUP ---
+# ==========================================
 st.sidebar.header("🏦 CapTrader Import")
 clear_before_import = st.sidebar.checkbox("Vor Import alte Daten löschen", value=True)
 ct_file = st.sidebar.file_uploader("CapTrader Flex-Query CSV hochladen", type=["csv"], key="ct_up")
@@ -185,13 +192,6 @@ if ct_file is not None:
                 st.dataframe(raw_preview.head(5))
         except Exception as e:
             st.sidebar.error(f"Fehler beim Import: {e}")
-
-st.sidebar.divider()
-st.sidebar.header("🧹 Datenbank säubern")
-if st.sidebar.button("🗑️ Alle Trades jetzt löschen (Reset)", use_container_width=True):
-    save_trades(pd.DataFrame(columns=COLUMNS))
-    st.sidebar.success("Datenbank wurde komplett geleert!")
-    st.rerun()
 
 st.sidebar.divider()
 st.sidebar.header("💾 Tagebuch-Backup (CSV)")
@@ -219,6 +219,9 @@ if uploaded_file is not None:
         except Exception as e:
             st.sidebar.error(f"Fehler: {e}")
 
+# ==========================================
+# --- KPI-ÜBERSICHT & RESET ---
+# ==========================================
 df = st.session_state.trades_df
 
 total_pnl = df["Netto-GuV ($)"].sum() if not df.empty else 0.0
@@ -235,21 +238,23 @@ c4.metric("🎯 Trefferquote (Geschlossen)", f"{win_rate:.1f} %")
 
 st.divider()
 
+# ==========================================
+# --- REITER: VERWALTUNG / NEUER TRADE / CHART ---
+# ==========================================
 tab1, tab2, tab3 = st.tabs(["📋 Alle Trades & Schließen", "➕ Neuen Trade eintragen", "📈 Auswertung"])
 
 with tab1:
+    col_head, col_reset = st.columns([3, 1])
+    with col_head:
+        st.subheader("Aktuelle Übersicht")
+    with col_reset:
+        if st.button("🗑️ Datenbank komplett leeren (Reset)", use_container_width=True):
+            save_trades(pd.DataFrame(columns=COLUMNS))
+            st.rerun()
+
     if df.empty:
         st.info("Datenbank ist aktuell leer. Importiere links deine neue CapTrader CSV-Datei ab November.")
     else:
-        st.subheader("Aktuelle Übersicht")
         st.dataframe(df, hide_index=True, use_container_width=True)
 
         st.subheader("🔄 Offenen Trade manuell schließen / abrechnen")
-        open_list = df[df["Status"] == "Offen"]
-        
-        if open_list.empty:
-            st.write("Aktuell sind keine offenen Trades vorhanden.")
-        else:
-            c_sel, c_stat, c_buyback, c_date = st.columns(4)
-            trade_options = {f"ID {row['ID']} | {row['Ticker']} {row['Strategie']} (Strike {row['Strike']})": row["ID"] for _, row in open_list.iterrows()}
-            
