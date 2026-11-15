@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
-from datetime import date, datetime
+from datetime import date
 
 st.set_page_config(page_title="Stillhalter Trading-Tagebuch", layout="wide")
 st.title("📓 Stillhalter Trading-Tagebuch & CapTrader-Importer")
@@ -46,12 +46,12 @@ def get_col(row, candidates, default=""):
     return default
 
 def format_ib_date(raw_val):
-    s = str(raw_val).split(";")[0].split(",")[0].strip()
+    s = str(raw_val).split(";").split(",").strip()
     if len(s) == 8 and s.isdigit():
         return f"{s[:4]}-{s[4:6]}-{s[6:]}"
     return s
 
-def parse_captrader_csv(uploaded_csv):
+def parse_captrader_csv(uploaded_csv, existing_df):
     uploaded_csv.seek(0)
     sample = uploaded_csv.read(2048).decode("utf-8", errors="ignore")
     sep = ";" if sample.count(";") > sample.count(",") else ","
@@ -78,7 +78,7 @@ def parse_captrader_csv(uploaded_csv):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split()[0].upper() if ticker_raw else ""
+        ticker = ticker_raw.split().upper() if ticker_raw else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -107,25 +107,22 @@ def parse_captrader_csv(uploaded_csv):
             "used": False
         }
 
-        # Unterscheidung: Short-Eröffnung vs. Rückkauf/Schließung
         if qty < 0 and open_close in ["O", "OPEN", "E", "NAN", ""]:
             opens.append(trade_obj)
         elif qty > 0 or open_close in ["C", "CLOSE", "S"]:
             closes.append(trade_obj)
 
-    # Nach Datum sortieren, damit Zuordnung chronologisch stimmt
     opens.sort(key=lambda x: x["date"])
     closes.sort(key=lambda x: x["date"])
 
     imported_rows = []
-    current_max_id = int(st.session_state.trades_df["ID"].max()) if not st.session_state.trades_df.empty else 0
+    current_max_id = int(existing_df["ID"].max()) if not existing_df.empty else 0
     today_str = str(date.today())
 
     for op in opens:
         current_max_id += 1
         strat = "Cash Secured Put (CSP)" if op["put_call"] == "P" else ("Covered Call (CC)" if op["put_call"] == "C" else "Option (Sonstige)")
         
-        # Passenden Rückkauf suchen (gleicher Ticker, Put/Call, Strike, Verfall)
         matched_close = None
         for cl in closes:
             if (not cl["used"] and cl["ticker"] == op["ticker"] and 
@@ -144,7 +141,6 @@ def parse_captrader_csv(uploaded_csv):
         else:
             total_comm = op["comm"]
             buyback_price = 0.0
-            # Prüfen, ob Verfallsdatum bereits vorbei ist
             if op["expiry"] < today_str:
                 status = "Wertlos verfallen"
                 close_date = op["expiry"]
@@ -177,24 +173,34 @@ def parse_captrader_csv(uploaded_csv):
     return pd.DataFrame(imported_rows), raw_df
 
 # ==========================================
-# --- SIDEBAR: BACKUP & CAPTRADER IMPORT ---
+# --- SIDEBAR: IMPORT, RESET & BACKUP ---
 # ==========================================
 st.sidebar.header("🏦 CapTrader Import")
+clear_before_import = st.sidebar.checkbox("Vor Import alte Daten löschen", value=True)
 ct_file = st.sidebar.file_uploader("CapTrader Flex-Query CSV hochladen", type=["csv"], key="ct_up")
+
 if ct_file is not None:
-    if st.sidebar.button("📥 CapTrader Trades übernehmen", type="primary"):
+    if st.sidebar.button("📥 CapTrader Trades übernehmen", type="primary", use_container_width=True):
         try:
-            new_ct_df, raw_preview = parse_captrader_csv(ct_file)
+            base_df = pd.DataFrame(columns=COLUMNS) if clear_before_import else st.session_state.trades_df
+            new_ct_df, raw_preview = parse_captrader_csv(ct_file, base_df)
             if not new_ct_df.empty:
-                updated_df = pd.concat([st.session_state.trades_df, new_ct_df], ignore_index=True)
+                updated_df = pd.concat([base_df, new_ct_df], ignore_index=True)
                 save_trades(updated_df)
-                st.sidebar.success(f"✅ {len(new_ct_df)} Trades importiert & automatisch abgeglichen!")
+                st.sidebar.success(f"✅ {len(new_ct_df)} Trades importiert!")
                 st.rerun()
             else:
                 st.sidebar.warning("0 Short-Options-Eröffnungen gefunden.")
                 st.dataframe(raw_preview.head(5))
         except Exception as e:
             st.sidebar.error(f"Fehler beim Import: {e}")
+
+st.sidebar.divider()
+st.sidebar.header("🧹 Datenbank säubern")
+if st.sidebar.button("🗑️ Alle Trades jetzt löschen (Reset)", use_container_width=True):
+    save_trades(pd.DataFrame(columns=COLUMNS))
+    st.sidebar.success("Datenbank wurde komplett geleert!")
+    st.rerun()
 
 st.sidebar.divider()
 st.sidebar.header("💾 Tagebuch-Backup (CSV)")
@@ -210,7 +216,7 @@ st.sidebar.download_button(
 
 uploaded_file = st.sidebar.file_uploader("⬆️ Gespeichertes Tagebuch laden", type=["csv"], key="bk_up")
 if uploaded_file is not None:
-    if st.sidebar.button("📂 Backup wiederherstellen"):
+    if st.sidebar.button("📂 Backup wiederherstellen", use_container_width=True):
         try:
             loaded_df = pd.read_csv(uploaded_file)
             if set(COLUMNS).issubset(loaded_df.columns):
@@ -248,8 +254,5 @@ tab1, tab2, tab3 = st.tabs(["📋 Alle Trades & Schließen", "➕ Neuen Trade ei
 
 with tab1:
     if df.empty:
-        st.info("Noch keine Trades vorhanden. Importiere links deine CapTrader CSV-Datei oder trage einen Trade unter 'Neuen Trade eintragen' ein.")
+        st.info("Datenbank ist aktuell leer. Importiere links deine neue CapTrader CSV-Datei ab November.")
     else:
-        st.subheader("Aktuelle Übersicht")
-        st.dataframe(df, hide_index=True, use_container_width=True)
-
