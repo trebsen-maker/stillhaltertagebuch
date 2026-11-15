@@ -43,7 +43,7 @@ def get_col(row, candidates, default=""):
 def format_ib_date(raw_val):
     s = str(raw_val).strip()
     if "." in s and s.replace(".", "").isdigit():
-        s = s.split(".")
+        s = s.split(".")[0]
     digits = re.sub(r"\D", "", s)
     if len(digits) >= 8:
         return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
@@ -76,7 +76,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split().upper() if ticker_raw else ""
+        ticker = ticker_raw.split()[0].upper() if ticker_raw else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -216,7 +216,12 @@ if uploaded_file is not None:
         except Exception as e:
             st.sidebar.error(f"Fehler: {e}")
 
-df = st.session_state.trades_df
+df = st.session_state.trades_df.copy()
+
+if not df.empty:
+    df["Netto-GuV ($)"] = pd.to_numeric(df["Netto-GuV ($)"], errors="coerce").fillna(0.0)
+    df["Gebühren ($)"] = pd.to_numeric(df["Gebühren ($)"], errors="coerce").fillna(0.0)
+    df["Kontrakte"] = pd.to_numeric(df["Kontrakte"], errors="coerce").fillna(0).astype(int)
 
 total_pnl = df["Netto-GuV ($)"].sum() if not df.empty else 0.0
 open_trades = len(df[df["Status"] == "Offen"]) if not df.empty else 0
@@ -232,7 +237,12 @@ c4.metric("🎯 Trefferquote (Geschlossen)", f"{win_rate:.1f} %")
 
 st.divider()
 
-tab1, tab2, tab3 = st.tabs(["📋 Alle Trades", "➕ Neuen Trade eintragen", "📈 Monatliche Auswertung"])
+trade_count = len(df)
+tab1, tab2, tab3 = st.tabs([
+    f"📋 Alle Trades ({trade_count})",
+    "➕ Neuen Trade eintragen",
+    f"📈 Monatliche Auswertung ({trade_count})"
+])
 
 with tab1:
     if st.button("🗑️ Datenbank komplett leeren (Reset)"):
@@ -240,7 +250,7 @@ with tab1:
         st.rerun()
 
     if df.empty:
-        st.info("Datenbank ist aktuell leer. Importiere links deine CapTrader CSV-Datei.")
+        st.info("Datenbank ist aktuell leer. Bitte lade links deine CapTrader CSV-Datei hoch.")
     else:
         st.dataframe(df, hide_index=True, use_container_width=True, height=600)
 
@@ -248,7 +258,3 @@ with tab2:
     with st.form("new_trade_form", clear_on_submit=True):
         t_open_date = st.date_input("Eröffnungsdatum", value=date.today())
         t_ticker = st.text_input("Ticker-Symbol (z. B. AAPL, AAL)").upper().strip()
-        t_strategy = st.selectbox("Strategie", ["Cash Secured Put (CSP)", "Covered Call (CC)", "Bull Put Spread", "Bear Call Spread", "Iron Condor"])
-        t_contracts = st.number_input("Anzahl Kontrakte", min_value=1, value=1, step=1)
-        t_strike = st.number_input("Strike-Preis ($)", min_value=0.5, value=50.0, step=0.5)
-        t_exp_date = st.date_input("Verfallsdatum", value=date.today())
