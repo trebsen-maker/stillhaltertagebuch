@@ -43,7 +43,7 @@ def get_col(row, candidates, default=""):
 def format_ib_date(raw_val):
     s = str(raw_val).strip()
     if "." in s and s.replace(".", "").isdigit():
-        s = s.split(".")
+        s = s.split(".")[0]
     digits = re.sub(r"\D", "", s)
     if len(digits) >= 8:
         return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
@@ -85,7 +85,8 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split().upper() if ticker_raw else ""
+        parts = ticker_raw.split()
+        ticker = parts[0].upper() if parts else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
