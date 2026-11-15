@@ -43,7 +43,7 @@ def get_col(row, candidates, default=""):
 def format_ib_date(raw_val):
     s = str(raw_val).strip()
     if "." in s and s.replace(".", "").isdigit():
-        s = s.split(".")
+        s = s.split(".")[0]
     digits = re.sub(r"\D", "", s)
     if len(digits) >= 8:
         return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
@@ -76,7 +76,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split().upper() if ticker_raw else ""
+        ticker = ticker_raw.split()[0].upper() if ticker_raw else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -170,9 +170,6 @@ def parse_captrader_csv(uploaded_csv, existing_df):
 
     return pd.DataFrame(imported_rows), raw_df
 
-# ==========================================
-# --- SIDEBAR: IMPORT & BACKUP ---
-# ==========================================
 st.sidebar.header("🏦 CapTrader Import")
 clear_before_import = st.sidebar.checkbox("Vor Import alte Daten löschen", value=True)
 ct_file = st.sidebar.file_uploader("CapTrader Flex-Query CSV hochladen", type=["csv"], key="ct_up")
@@ -219,9 +216,6 @@ if uploaded_file is not None:
         except Exception as e:
             st.sidebar.error(f"Fehler: {e}")
 
-# ==========================================
-# --- KPI-ÜBERSICHT ---
-# ==========================================
 df = st.session_state.trades_df
 
 total_pnl = df["Netto-GuV ($)"].sum() if not df.empty else 0.0
@@ -238,9 +232,6 @@ c4.metric("🎯 Trefferquote (Geschlossen)", f"{win_rate:.1f} %")
 
 st.divider()
 
-# ==========================================
-# --- REITER: ÜBERSICHT / NEUER TRADE / AUSWERTUNG ---
-# ==========================================
 tab1, tab2, tab3 = st.tabs(["📋 Alle Trades", "➕ Neuen Trade eintragen", "📈 Monatliche Auswertung"])
 
 with tab1:
@@ -259,3 +250,9 @@ with tab1:
 
 with tab2:
     with st.form("new_trade_form", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            t_open_date = st.date_input("Eröffnungsdatum", value=date.today())
+            t_ticker = st.text_input("Ticker-Symbol (z. B. AAPL, AAL)").upper().strip()
+            t_strategy = st.selectbox("Strategie", ["Cash Secured Put (CSP)", "Covered Call (CC)", "Bull Put Spread", "Bear Call Spread", "Iron Condor"])
+        with col2:
