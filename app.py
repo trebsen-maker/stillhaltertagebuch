@@ -43,7 +43,7 @@ def get_col(row, candidates, default=""):
 def format_ib_date(raw_val):
     s = str(raw_val).strip()
     if "." in s and s.replace(".", "").isdigit():
-        s = s.split(".")[0]
+        s = s.split(".")
     digits = re.sub(r"\D", "", s)
     if len(digits) >= 8:
         return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
@@ -76,7 +76,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             continue
 
         ticker_raw = str(get_col(r, ["UnderlyingSymbol", "Basiswert-Symbol", "Symbol"], "")).strip()
-        ticker = ticker_raw.split()[0].upper() if ticker_raw else ""
+        ticker = ticker_raw.split().upper() if ticker_raw else ""
         if not ticker or ticker in ["NAN", "SYMBOL", "UNDERLYINGSYMBOL"]:
             continue
 
@@ -235,13 +235,9 @@ st.divider()
 tab1, tab2, tab3 = st.tabs(["📋 Alle Trades", "➕ Neuen Trade eintragen", "📈 Monatliche Auswertung"])
 
 with tab1:
-    col_head, col_reset = st.columns([3, 1])
-    with col_head:
-        st.subheader("Aktuelle Übersicht")
-    with col_reset:
-        if st.button("🗑️ Datenbank komplett leeren (Reset)", use_container_width=True):
-            save_trades(pd.DataFrame(columns=COLUMNS))
-            st.rerun()
+    if st.button("🗑️ Datenbank komplett leeren (Reset)"):
+        save_trades(pd.DataFrame(columns=COLUMNS))
+        st.rerun()
 
     if df.empty:
         st.info("Datenbank ist aktuell leer. Importiere links deine CapTrader CSV-Datei.")
@@ -250,9 +246,9 @@ with tab1:
 
 with tab2:
     with st.form("new_trade_form", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            t_open_date = st.date_input("Eröffnungsdatum", value=date.today())
-            t_ticker = st.text_input("Ticker-Symbol (z. B. AAPL, AAL)").upper().strip()
-            t_strategy = st.selectbox("Strategie", ["Cash Secured Put (CSP)", "Covered Call (CC)", "Bull Put Spread", "Bear Call Spread", "Iron Condor"])
-        with col2:
+        t_open_date = st.date_input("Eröffnungsdatum", value=date.today())
+        t_ticker = st.text_input("Ticker-Symbol (z. B. AAPL, AAL)").upper().strip()
+        t_strategy = st.selectbox("Strategie", ["Cash Secured Put (CSP)", "Covered Call (CC)", "Bull Put Spread", "Bear Call Spread", "Iron Condor"])
+        t_contracts = st.number_input("Anzahl Kontrakte", min_value=1, value=1, step=1)
+        t_strike = st.number_input("Strike-Preis ($)", min_value=0.5, value=50.0, step=0.5)
+        t_exp_date = st.date_input("Verfallsdatum", value=date.today())
