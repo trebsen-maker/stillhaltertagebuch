@@ -202,7 +202,7 @@ if ct_file is not None:
                 st.sidebar.success(f"✅ {len(new_ct_df)} Options-Trades importiert!")
                 st.rerun()
             else:
-                st.sidebar.warning("Keine offenen/abgeschlossenen Short-Optionen (OPT) in dieser Datei gefunden.")
+                st.sidebar.warning("Keine Short-Optionen (OPT) gefunden.")
         except Exception as e:
             st.sidebar.error(f"Fehler beim Import: {e}")
 
@@ -254,10 +254,11 @@ c4.metric("🎯 Trefferquote (Geschlossen)", f"{win_rate:.1f} %")
 st.divider()
 
 trade_count = len(df)
-tab1, tab2, tab3 = st.tabs([
-    f"📋 Alle Trades ({trade_count})",
-    "➕ Neuen Trade eintragen",
-    f"📈 Monatliche Auswertung ({trade_count})"
-])
+ansicht = st.radio(
+    "Ansicht wählen:",
+    [f"📋 Alle Trades ({trade_count})", f"📈 Monatliche Auswertung ({trade_count})", "➕ Neuen Trade eintragen"],
+    horizontal=True
+)
 
-with tab1:
+st.divider()
+
