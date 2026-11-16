@@ -7,6 +7,8 @@ from datetime import date, datetime
 
 st.set_page_config(page_title="Stillhalter Trading-Tagebuch", layout="wide")
 st.title("📓 Stillhalter Trading-Tagebuch")
+st.link_button("📊 Zum Stillhalter-Screener wechseln", "https://stillhalterscreener.streamlit.app/")
+
 
 DATA_FILE = "tagebuch_daten.csv"
 COLUMNS = [
