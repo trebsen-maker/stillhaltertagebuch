@@ -206,3 +206,57 @@ closed = df[df["Status"] != "Offen"] if not df.empty else pd.DataFrame()
 c5.metric("🎯 Trefferquote", f"{(len(closed[closed['Netto-GuV ($)'] > 0]) / len(closed) * 100) if len(closed) > 0 else 0.0:.1f} %")
 
 st.divider()
+ansicht = st.radio("Ansicht:", [f"📋 Alle Trades & Bearbeiten ({len(df)})", "➕ Neuen Trade eintragen", f"📈 Monatliche Auswertung ({len(df)})"], horizontal=True)
+
+if ansicht.startswith("📋"):
+    b1, b2 = st.columns(2)
+    save_clicked = b1.button("💾 Änderungen speichern & Erlös neu berechnen", type="primary", use_container_width=True)
+    reset_clicked = b2.button("🗑️ Datenbank leeren (Reset)", use_container_width=True)
+    if reset_clicked:
+        save_trades(pd.DataFrame(columns=COLUMNS))
+    if df.empty:
+        st.info("Datenbank ist leer.")
+    else:
+        disp = df.copy()
+        dtes = [calc_dte(r["Verfall"], r["Status"]) for _, r in disp.iterrows()]
+        disp.insert(7, "Restlaufzeit", ["-" if d is None else (f"⚠️ {d} Tage" if d < 10 else f"{d} Tage") for d in dtes])
+        warn = [f"{disp.iloc[i]['Ticker']} ({d}T)" for i, d in enumerate(dtes) if d is not None and d < 10]
+        if warn:
+            st.error("🚨 **Verfall < 10 Tage:** " + " | ".join(warn))
+        edited_df = st.data_editor(
+            disp, hide_index=True, use_container_width=True, height=550,
+            disabled=["ID", "Restlaufzeit", "Netto-GuV ($)", "Aktien-Erlös ($)", "Rendite auf Kapital (%)"],
+            column_config={
+                "Status": st.column_config.SelectboxColumn("Status", options=["Offen", "Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)", "Zugewiesen (Called Away)"], required=True),
+                "Rückkauf pro Aktie": st.column_config.NumberColumn("Rückkauf pro Aktie", min_value=0.0, step=0.05, format="%.3f"),
+                "Aktien-Erlös ($)": st.column_config.NumberColumn("Aktien-Erlös ($)", format="%.2f $")
+            }
+        )
+        if save_clicked:
+            process_and_save(edited_df)
+
+if ansicht.startswith("➕"):
+    st.subheader("➕ Neuen Trade manuell eintragen")
+    t_open = st.date_input("Eröffnungsdatum", value=date.today())
+    t_tick = st.text_input("Ticker (z. B. AAPL, AAL)").upper().strip()
+    t_strat = st.selectbox("Strategie", ["Cash Secured Put (CSP)", "Covered Call (CC)", "Bull Put Spread", "Bear Call Spread", "Iron Condor"])
+    t_qty = st.number_input("Anzahl Kontrakte", min_value=1, value=1, step=1)
+    t_strk = st.number_input("Strike-Preis ($)", min_value=0.5, value=50.0, step=0.5)
+    t_exp = st.date_input("Verfallsdatum", value=date.today())
+    t_prem = st.number_input("Erhaltene Prämie pro Aktie ($)", min_value=0.01, value=1.20, step=0.05)
+    t_fee = st.number_input("Gebühren gesamt ($)", min_value=0.0, value=2.50, step=0.5)
+    t_note = st.text_input("Notiz")
+    if st.button("✅ Trade speichern", type="primary"):
+        add_manual_trade(df, t_open, t_tick, t_strat, t_qty, t_strk, t_exp, t_prem, t_fee, t_note)
+
+if ansicht.startswith("📈"):
+    if df.empty:
+        st.warning("Noch keine Trades geladen.")
+    else:
+        df["Monat"] = df["Eröffnungsdatum"].astype(str).str.slice(0, 7)
+        m_sum = df.groupby("Monat", as_index=False).agg(Trades=("ID", "count"), Kontrakte=("Kontrakte", "sum"), Gebühren=("Gebühren ($)", "sum"), Prämien_GuV=("Netto-GuV ($)", "sum"), Aktien_Erlös=("Aktien-Erlös ($)", "sum")).sort_values("Monat")
+        st.subheader("📅 Monatliche Performance-Übersicht")
+        fig = px.bar(m_sum, x="Monat", y="Prämien_GuV", text_auto=".2f", title="Netto-Prämien-Gewinn / Verlust pro Monat ($)", template="plotly_dark", color="Prämien_GuV", color_continuous_scale="RdYlGn")
+        fig.update_layout(xaxis_type="category")
+        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(m_sum, hide_index=True, use_container_width=True)
