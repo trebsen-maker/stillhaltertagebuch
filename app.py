@@ -14,15 +14,17 @@ COLUMNS = [
     "ID", "Eröffnungsdatum", "Ticker", "Strategie", "Kontrakte",
     "Strike", "Verfall", "Prämie pro Aktie", "Gebühren ($)",
     "Status", "Schließungsdatum", "Rückkauf pro Aktie",
-    "Netto-GuV ($)", "Rendite auf Kapital (%)", "Notizen"
+    "Netto-GuV ($)", "Aktien-Erlös ($)", "Rendite auf Kapital (%)", "Notizen"
 ]
 
 def load_trades():
     if os.path.exists(DATA_FILE):
         try:
             df = pd.read_csv(DATA_FILE)
+            if "Aktien-Erlös ($)" not in df.columns:
+                df["Aktien-Erlös ($)"] = 0.0
             if set(COLUMNS).issubset(df.columns):
-                return df
+                return df[COLUMNS]
         except Exception:
             pass
     return pd.DataFrame(columns=COLUMNS)
@@ -124,7 +126,7 @@ def parse_captrader_csv(uploaded_csv, existing_df):
             "ID": max_id, "Eröffnungsdatum": op["date"], "Ticker": op["ticker"], "Strategie": strat,
             "Kontrakte": op["qty"], "Strike": op["strike"], "Verfall": op["exp"], "Prämie pro Aktie": round(op["price"], 3),
             "Gebühren ($)": round(comm, 2), "Status": status, "Schließungsdatum": c_date, "Rückkauf pro Aktie": round(bb, 3),
-            "Netto-GuV ($)": round(pnl, 2), "Rendite auf Kapital (%)": round(roc, 2), "Notizen": "CapTrader Import"
+            "Netto-GuV ($)": round(pnl, 2), "Aktien-Erlös ($)": 0.0, "Rendite auf Kapital (%)": round(roc, 2), "Notizen": "CapTrader Import"
         })
 
     return pd.DataFrame(rows), f"Gelesen: {len(raw_df)} Zeilen ({opt_count} OPT, {stk_count} STK)."
@@ -145,22 +147,29 @@ st.sidebar.divider()
 st.sidebar.download_button("⬇️ Backup speichern (CSV)", st.session_state.trades_df.to_csv(index=False).encode("utf-8"), f"tagebuch_{date.today()}.csv", "text/csv", use_container_width=True)
 bk_file = st.sidebar.file_uploader("⬆️ Backup laden", type=["csv"], key="bk")
 if bk_file and st.sidebar.button("📂 Backup wiederherstellen", use_container_width=True):
-    save_trades(pd.read_csv(bk_file))
+    loaded = pd.read_csv(bk_file)
+    if "Aktien-Erlös ($)" not in loaded.columns:
+        loaded["Aktien-Erlös ($)"] = 0.0
+    save_trades(loaded)
     st.rerun()
 
 df = st.session_state.trades_df.copy()
 if not df.empty:
+    if "Aktien-Erlös ($)" not in df.columns:
+        df["Aktien-Erlös ($)"] = 0.0
     df["Netto-GuV ($)"] = pd.to_numeric(df["Netto-GuV ($)"], errors="coerce").fillna(0.0)
+    df["Aktien-Erlös ($)"] = pd.to_numeric(df["Aktien-Erlös ($)"], errors="coerce").fillna(0.0)
     df["Gebühren ($)"] = pd.to_numeric(df["Gebühren ($)"], errors="coerce").fillna(0.0)
     df["Kontrakte"] = pd.to_numeric(df["Kontrakte"], errors="coerce").fillna(0).astype(int)
     df["Rückkauf pro Aktie"] = pd.to_numeric(df["Rückkauf pro Aktie"], errors="coerce").fillna(0.0)
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("💰 Gesamt-GuV", f"{df['Netto-GuV ($)'].sum() if not df.empty else 0.0:,.2f} $")
-c2.metric("📂 Offene Positionen", f"{len(df[df['Status'] == 'Offen']) if not df.empty else 0}")
-c3.metric("⏳ Gebundene Prämie", f"{df[df['Status'] == 'Offen']['Netto-GuV ($)'].sum() if not df.empty else 0.0:,.2f} $")
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("💰 Prämien-GuV", f"{df['Netto-GuV ($)'].sum() if not df.empty else 0.0:,.2f} $")
+c2.metric("💵 Aktien-Erlös (Zugewiesen)", f"{df['Aktien-Erlös ($)'].sum() if not df.empty else 0.0:,.2f} $")
+c3.metric("📂 Offene Positionen", f"{len(df[df['Status'] == 'Offen']) if not df.empty else 0}")
+c4.metric("⏳ Gebundene Prämie", f"{df[df['Status'] == 'Offen']['Netto-GuV ($)'].sum() if not df.empty else 0.0:,.2f} $")
 closed = df[df["Status"] != "Offen"] if not df.empty else pd.DataFrame()
-c4.metric("🎯 Trefferquote", f"{(len(closed[closed['Netto-GuV ($)'] > 0]) / len(closed) * 100) if len(closed) > 0 else 0.0:.1f} %")
+c5.metric("🎯 Trefferquote", f"{(len(closed[closed['Netto-GuV ($)'] > 0]) / len(closed) * 100) if len(closed) > 0 else 0.0:.1f} %")
 
 st.divider()
 ansicht = st.radio("Ansicht:", [f"📋 Alle Trades & Bearbeiten ({len(df)})", "➕ Neuen Trade eintragen", f"📈 Monatliche Auswertung ({len(df)})"], horizontal=True)
@@ -179,32 +188,21 @@ if ansicht.startswith("📋"):
         if warn:
             st.error("🚨 **Verfall < 10 Tage:** " + " | ".join(warn))
 
-        st.caption("💡 Klicke direkt in eine Zelle (z. B. **Status**, **Rückkauf pro Aktie**, **Schließungsdatum** oder **Notizen**), um Werte zu ändern. Danach unten speichern.")
+        st.caption("💡 Ändere bei einem Covered Call den **Status** auf **Zugewiesen (Called Away)** und klicke auf Speichern – der **Aktien-Erlös ($)** wird automatisch berechnet.")
         edited_df = st.data_editor(
             disp,
             hide_index=True,
             use_container_width=True,
             height=550,
-            disabled=["ID", "Restlaufzeit", "Netto-GuV ($)", "Rendite auf Kapital (%)"],
+            disabled=["ID", "Restlaufzeit", "Netto-GuV ($)", "Aktien-Erlös ($)", "Rendite auf Kapital (%)"],
             column_config={
                 "Status": st.column_config.SelectboxColumn(
                     "Status",
                     options=["Offen", "Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)", "Zugewiesen (Called Away)"],
-
                     required=True
                 ),
-                "Rückkauf pro Aktie": st.column_config.NumberColumn("Rückkauf pro Aktie", min_value=0.0, step=0.05, format="%.3f")
+                "Rückkauf pro Aktie": st.column_config.NumberColumn("Rückkauf pro Aktie", min_value=0.0, step=0.05, format="%.3f"),
+                "Aktien-Erlös ($)": st.column_config.NumberColumn("Aktien-Erlös ($)", format="%.2f $")
             }
         )
 
-        if st.button("💾 Änderungen speichern & GuV neu berechnen", type="primary"):
-            updated = edited_df.drop(columns=["Restlaufzeit"]).copy()
-            for i, r in updated.iterrows():
-                qty = int(to_float(r["Kontrakte"]))
-                prem = to_float(r["Prämie pro Aktie"])
-                fee = to_float(r["Gebühren ($)"])
-                strk = to_float(r["Strike"])
-                bb = 0.0 if r["Status"] == "Wertlos verfallen" else to_float(r["Rückkauf pro Aktie"])
-                updated.at[i, "Rückkauf pro Aktie"] = round(bb, 3)
-                pnl = (qty * 100 * (prem - bb)) - fee
-                updated.at[i, "Netto-GuV ($)"] = round(pnl, 2)
