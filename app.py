@@ -184,6 +184,14 @@ st.sidebar.download_button("⬇️ Backup speichern (CSV)", st.session_state.tra
 bk_file = st.sidebar.file_uploader("⬆️ Backup laden", type=["csv"], key="bk")
 if bk_file and st.sidebar.button("📂 Backup wiederherstellen", use_container_width=True):
     loaded = pd.read_csv(bk_file)
+    for col in COLUMNS:
+        if col not in loaded.columns:
+            loaded[col] = 0.0 if "($)" in col or "(%)" in col else "-"
+    save_trades(loaded[COLUMNS])
+    st.rerun()
+
+if bk_file and st.sidebar.button("📂 Backup wiederherstellen", use_container_width=True):
+    loaded = pd.read_csv(bk_file)
     if "Aktien-Erlös ($)" not in loaded.columns:
         loaded["Aktien-Erlös ($)"] = 0.0
     save_trades(loaded)
