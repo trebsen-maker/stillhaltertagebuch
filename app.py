@@ -175,9 +175,14 @@ st.divider()
 ansicht = st.radio("Ansicht:", [f"📋 Alle Trades & Bearbeiten ({len(df)})", "➕ Neuen Trade eintragen", f"📈 Monatliche Auswertung ({len(df)})"], horizontal=True)
 
 if ansicht.startswith("📋"):
-    if st.button("🗑️ Datenbank leeren (Reset)"):
+    b1, b2 = st.columns([2, 1])
+    save_clicked = b1.button("💾 Änderungen speichern & Erlös neu berechnen", type="primary", use_container_width=True)
+    reset_clicked = b2.button("🗑️ Datenbank leeren (Reset)", use_container_width=True)
+
+    if reset_clicked:
         save_trades(pd.DataFrame(columns=COLUMNS))
         st.rerun()
+
     if df.empty:
         st.info("Datenbank ist leer. Lade links deine CapTrader CSV-Datei hoch oder trage oben einen Trade ein.")
     else:
@@ -188,7 +193,6 @@ if ansicht.startswith("📋"):
         if warn:
             st.error("🚨 **Verfall < 10 Tage:** " + " | ".join(warn))
 
-        st.caption("💡 Ändere bei einem Covered Call den **Status** auf **Zugewiesen (Called Away)** und klicke auf Speichern – der **Aktien-Erlös ($)** wird automatisch berechnet.")
         edited_df = st.data_editor(
             disp,
             hide_index=True,
@@ -196,13 +200,10 @@ if ansicht.startswith("📋"):
             height=550,
             disabled=["ID", "Restlaufzeit", "Netto-GuV ($)", "Aktien-Erlös ($)", "Rendite auf Kapital (%)"],
             column_config={
-                "Status": st.column_config.SelectboxColumn(
-                    "Status",
-                    options=["Offen", "Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)", "Zugewiesen (Called Away)"],
-                    required=True
-                ),
+                "Status": st.column_config.SelectboxColumn("Status", options=["Offen", "Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)", "Zugewiesen (Called Away)"], required=True),
                 "Rückkauf pro Aktie": st.column_config.NumberColumn("Rückkauf pro Aktie", min_value=0.0, step=0.05, format="%.3f"),
                 "Aktien-Erlös ($)": st.column_config.NumberColumn("Aktien-Erlös ($)", format="%.2f $")
             }
         )
 
+        if save_clicked:
