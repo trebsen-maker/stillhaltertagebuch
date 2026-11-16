@@ -189,7 +189,8 @@ if ansicht.startswith("📋"):
             column_config={
                 "Status": st.column_config.SelectboxColumn(
                     "Status",
-                    options=["Offen", "Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)"],
+                    options=["Offen", "Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)", "Zugewiesen (Called Away)"],
+
                     required=True
                 ),
                 "Rückkauf pro Aktie": st.column_config.NumberColumn("Rückkauf pro Aktie", min_value=0.0, step=0.05, format="%.3f")
