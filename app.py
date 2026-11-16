@@ -55,6 +55,42 @@ def calc_dte(exp_str, status_str):
     except Exception:
         return None
 
+def process_and_save(edited_df):
+    updated = edited_df.drop(columns=["Restlaufzeit"]).copy()
+    for i, r in updated.iterrows():
+        qty = int(to_float(r["Kontrakte"]))
+        prem = to_float(r["Prämie pro Aktie"])
+        fee = to_float(r["Gebühren ($)"])
+        strk = to_float(r["Strike"])
+        st_clean = str(r["Status"]).strip()
+        bb = 0.0 if st_clean in ["Wertlos verfallen", "Angedient (Assigned)", "Zugewiesen (Called Away)"] else to_float(r["Rückkauf pro Aktie"])
+        updated.at[i, "Rückkauf pro Aktie"] = round(bb, 3)
+        pnl = (qty * 100 * (prem - bb)) - fee
+        updated.at[i, "Netto-GuV ($)"] = round(pnl, 2)
+        erloes = (qty * 100 * strk) if "Zugewiesen" in st_clean else 0.0
+        updated.at[i, "Aktien-Erlös ($)"] = round(erloes, 2)
+        updated.at[i, "Rendite auf Kapital (%)"] = round((pnl / (qty * 100 * strk) * 100) if strk > 0 else 0.0, 2)
+        if st_clean != "Offen" and str(r["Schließungsdatum"]).strip() in ["", "-"]:
+            updated.at[i, "Schließungsdatum"] = str(date.today())
+    save_trades(updated)
+    st.rerun()
+
+def add_manual_trade(df, t_open, t_tick, t_strat, t_qty, t_strk, t_exp, t_prem, t_fee, t_note):
+    if not t_tick:
+        return
+    pnl = (t_qty * 100 * t_prem) - t_fee
+    cap = t_qty * 100 * t_strk
+    roc = (pnl / cap * 100) if cap > 0 else 0.0
+    nid = int(df["ID"].max() + 1) if not df.empty else 1
+    nr = pd.DataFrame([{
+        "ID": nid, "Eröffnungsdatum": str(t_open), "Ticker": t_tick, "Strategie": t_strat,
+        "Kontrakte": t_qty, "Strike": t_strk, "Verfall": str(t_exp), "Prämie pro Aktie": t_prem,
+        "Gebühren ($)": t_fee, "Status": "Offen", "Schließungsdatum": "-", "Rückkauf pro Aktie": 0.0,
+        "Netto-GuV ($)": round(pnl, 2), "Aktien-Erlös ($)": 0.0, "Rendite auf Kapital (%)": round(roc, 2), "Notizen": t_note
+    }])
+    save_trades(pd.concat([df, nr], ignore_index=True))
+    st.rerun()
+
 def parse_captrader_csv(uploaded_csv, existing_df):
     uploaded_csv.seek(0)
     sample = uploaded_csv.read(2048).decode("utf-8", errors="ignore")
@@ -171,39 +207,3 @@ c4.metric("⏳ Gebundene Prämie", f"{df[df['Status'] == 'Offen']['Netto-GuV ($)
 closed = df[df["Status"] != "Offen"] if not df.empty else pd.DataFrame()
 c5.metric("🎯 Trefferquote", f"{(len(closed[closed['Netto-GuV ($)'] > 0]) / len(closed) * 100) if len(closed) > 0 else 0.0:.1f} %")
 
-st.divider()
-ansicht = st.radio("Ansicht:", [f"📋 Alle Trades & Bearbeiten ({len(df)})", "➕ Neuen Trade eintragen", f"📈 Monatliche Auswertung ({len(df)})"], horizontal=True)
-
-if ansicht.startswith("📋"):
-    b1, b2 = st.columns([2, 1])
-    save_clicked = b1.button("💾 Änderungen speichern & Erlös neu berechnen", type="primary", use_container_width=True)
-    reset_clicked = b2.button("🗑️ Datenbank leeren (Reset)", use_container_width=True)
-
-    if reset_clicked:
-        save_trades(pd.DataFrame(columns=COLUMNS))
-        st.rerun()
-
-    if df.empty:
-        st.info("Datenbank ist leer. Lade links deine CapTrader CSV-Datei hoch oder trage oben einen Trade ein.")
-    else:
-        disp = df.copy()
-        dtes = [calc_dte(r["Verfall"], r["Status"]) for _, r in disp.iterrows()]
-        disp.insert(7, "Restlaufzeit", ["-" if d is None else (f"⚠️ {d} Tage" if d < 10 else f"{d} Tage") for d in dtes])
-        warn = [f"{disp.iloc[i]['Ticker']} ({d}T)" for i, d in enumerate(dtes) if d is not None and d < 10]
-        if warn:
-            st.error("🚨 **Verfall < 10 Tage:** " + " | ".join(warn))
-
-        edited_df = st.data_editor(
-            disp,
-            hide_index=True,
-            use_container_width=True,
-            height=550,
-            disabled=["ID", "Restlaufzeit", "Netto-GuV ($)", "Aktien-Erlös ($)", "Rendite auf Kapital (%)"],
-            column_config={
-                "Status": st.column_config.SelectboxColumn("Status", options=["Offen", "Wertlos verfallen", "Vorzeitig zurückgekauft", "Angedient (Assigned)", "Zugewiesen (Called Away)"], required=True),
-                "Rückkauf pro Aktie": st.column_config.NumberColumn("Rückkauf pro Aktie", min_value=0.0, step=0.05, format="%.3f"),
-                "Aktien-Erlös ($)": st.column_config.NumberColumn("Aktien-Erlös ($)", format="%.2f $")
-            }
-        )
-
-        if save_clicked:
