@@ -7,8 +7,7 @@ from datetime import date, datetime
 
 st.set_page_config(page_title="Stillhalter Trading-Tagebuch", layout="wide")
 st.title("📓 Stillhalter Trading-Tagebuch")
-st.link_button("📊 Zum Stillhalter-Screener wechseln", "https://de.tradingview.com/chart/wmfwFpTl/?symbol=NYSE%3ACDE")
-
+st.link_button("📊 Zum Stillhalter-Screener wechseln", "https://streamlit.app")
 
 DATA_FILE = "tagebuch_daten.csv"
 COLUMNS = [
@@ -140,14 +139,14 @@ if ct_file and st.sidebar.button("📥 Trades übernehmen", type="primary", use_
     st.sidebar.info(info)
     if not new_df.empty:
         save_trades(pd.concat([base, new_df], ignore_index=True))
-        st.sidebar.success(f"✅ {len(new_df)} Trades importiert!")
+        st.rerun()
 
 st.sidebar.divider()
 st.sidebar.download_button("⬇️ Backup speichern (CSV)", st.session_state.trades_df.to_csv(index=False).encode("utf-8"), f"tagebuch_{date.today()}.csv", "text/csv", use_container_width=True)
 bk_file = st.sidebar.file_uploader("⬆️ Backup laden", type=["csv"], key="bk")
 if bk_file and st.sidebar.button("📂 Backup wiederherstellen", use_container_width=True):
     save_trades(pd.read_csv(bk_file))
-    st.sidebar.success("Geladen!")
+    st.rerun()
 
 df = st.session_state.trades_df.copy()
 if not df.empty:
@@ -163,14 +162,14 @@ closed = df[df["Status"] != "Offen"] if not df.empty else pd.DataFrame()
 c4.metric("🎯 Trefferquote", f"{(len(closed[closed['Netto-GuV ($)'] > 0]) / len(closed) * 100) if len(closed) > 0 else 0.0:.1f} %")
 
 st.divider()
-ansicht = st.radio("Ansicht:", [f"📋 Alle Trades ({len(df)})", f"📈 Monatliche Auswertung ({len(df)})"], horizontal=True)
+ansicht = st.radio("Ansicht:", [f"📋 Alle Trades ({len(df)})", "➕ Neuen Trade eintragen", f"📈 Monatliche Auswertung ({len(df)})"], horizontal=True)
 
 if ansicht.startswith("📋"):
     if st.button("🗑️ Datenbank leeren (Reset)"):
         save_trades(pd.DataFrame(columns=COLUMNS))
         st.rerun()
     if df.empty:
-        st.info("Datenbank ist leer. Lade links deine CapTrader CSV-Datei hoch.")
+        st.info("Datenbank ist leer. Lade links deine CapTrader CSV-Datei hoch oder trage oben einen Trade ein.")
     else:
         disp = df.copy()
         dtes = [calc_dte(r["Verfall"], r["Status"]) for _, r in disp.iterrows()]
@@ -180,14 +179,20 @@ if ansicht.startswith("📋"):
             st.error("🚨 **Verfall < 10 Tage:** " + " | ".join(warn))
         st.dataframe(disp.style.apply(lambda r: ["background-color: rgba(255,75,75,0.25); font-weight: bold"]*len(r) if "⚠️" in str(r["Restlaufzeit"]) else [""]*len(r), axis=1), hide_index=True, use_container_width=True, height=600)
 
-if ansicht.startswith("📈"):
-    if df.empty:
-        st.warning("Noch keine Trades geladen. Bitte importiere links deine CSV-Datei.")
-    else:
-        df["Monat"] = df["Eröffnungsdatum"].astype(str).str.slice(0, 7)
-        m_sum = df.groupby("Monat", as_index=False).agg(Trades=("ID", "count"), Kontrakte=("Kontrakte", "sum"), Gebühren=("Gebühren ($)", "sum"), Netto_GuV=("Netto-GuV ($)", "sum")).sort_values("Monat")
-        st.subheader("📅 Monatliche Performance-Übersicht")
-        fig = px.bar(m_sum, x="Monat", y="Netto_GuV", text_auto=".2f", title="Netto-Gewinn / Verlust pro Monat ($)", template="plotly_dark", color="Netto_GuV", color_continuous_scale="RdYlGn")
-        fig.update_layout(xaxis_type="category")
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(m_sum, hide_index=True, use_container_width=True)
+if ansicht.startswith("➕"):
+    st.subheader("➕ Neuen Trade manuell eintragen")
+    t_open = st.date_input("Eröffnungsdatum", value=date.today())
+    t_tick = st.text_input("Ticker (z. B. AAPL, AAL)").upper().strip()
+    t_strat = st.selectbox("Strategie", ["Cash Secured Put (CSP)", "Covered Call (CC)", "Bull Put Spread", "Bear Call Spread", "Iron Condor"])
+    t_qty = st.number_input("Anzahl Kontrakte", min_value=1, value=1, step=1)
+    t_strk = st.number_input("Strike-Preis ($)", min_value=0.5, value=50.0, step=0.5)
+    t_exp = st.date_input("Verfallsdatum", value=date.today())
+    t_prem = st.number_input("Erhaltene Prämie pro Aktie ($)", min_value=0.01, value=1.20, step=0.05)
+    t_fee = st.number_input("Gebühren gesamt ($)", min_value=0.0, value=2.50, step=0.5)
+    t_note = st.text_input("Notiz")
+    if st.button("✅ Trade speichern", type="primary"):
+        if t_tick:
+            pnl = (t_qty * 100 * t_prem) - t_fee
+            cap = t_qty * 100 * t_strk
+            roc = (pnl / cap * 100) if cap > 0 else 0.0
+            nid = int(df["ID"].max() + 1) if not df.empty else 1
