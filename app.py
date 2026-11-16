@@ -17,21 +17,25 @@ COLUMNS = [
     "Netto-GuV ($)", "Aktien-Erlös ($)", "Rendite auf Kapital (%)", "Notizen"
 ]
 
+def ensure_columns(df):
+    for col in COLUMNS:
+        if col not in df.columns:
+            df[col] = 0.0 if ("($)" in col or "(%)" in col) else "-"
+    return df[COLUMNS]
+
 def load_trades():
     if os.path.exists(DATA_FILE):
         try:
             df = pd.read_csv(DATA_FILE)
-            if "Aktien-Erlös ($)" not in df.columns:
-                df["Aktien-Erlös ($)"] = 0.0
-            if set(COLUMNS).issubset(df.columns):
-                return df[COLUMNS]
+            return ensure_columns(df)
         except Exception:
             pass
     return pd.DataFrame(columns=COLUMNS)
 
 def save_trades(df):
-    st.session_state.trades_df = df
-    df.to_csv(DATA_FILE, index=False)
+    clean_df = ensure_columns(df.copy())
+    st.session_state.trades_df = clean_df
+    clean_df.to_csv(DATA_FILE, index=False)
 
 if "trades_df" not in st.session_state:
     st.session_state.trades_df = load_trades()
@@ -73,7 +77,6 @@ def process_and_save(edited_df):
         if st_clean != "Offen" and str(r["Schließungsdatum"]).strip() in ["", "-"]:
             updated.at[i, "Schließungsdatum"] = str(date.today())
     save_trades(updated)
-    st.rerun()
 
 def add_manual_trade(df, t_open, t_tick, t_strat, t_qty, t_strk, t_exp, t_prem, t_fee, t_note):
     if not t_tick:
@@ -89,7 +92,6 @@ def add_manual_trade(df, t_open, t_tick, t_strat, t_qty, t_strk, t_exp, t_prem, 
         "Netto-GuV ($)": round(pnl, 2), "Aktien-Erlös ($)": 0.0, "Rendite auf Kapital (%)": round(roc, 2), "Notizen": t_note
     }])
     save_trades(pd.concat([df, nr], ignore_index=True))
-    st.rerun()
 
 def parse_captrader_csv(uploaded_csv, existing_df):
     uploaded_csv.seek(0)
@@ -177,30 +179,18 @@ if ct_file and st.sidebar.button("📥 Trades übernehmen", type="primary", use_
     st.sidebar.info(info)
     if not new_df.empty:
         save_trades(pd.concat([base, new_df], ignore_index=True))
-        st.rerun()
+        st.sidebar.success(f"✅ {len(new_df)} Trades importiert!")
 
 st.sidebar.divider()
 st.sidebar.download_button("⬇️ Backup speichern (CSV)", st.session_state.trades_df.to_csv(index=False).encode("utf-8"), f"tagebuch_{date.today()}.csv", "text/csv", use_container_width=True)
 bk_file = st.sidebar.file_uploader("⬆️ Backup laden", type=["csv"], key="bk")
 if bk_file and st.sidebar.button("📂 Backup wiederherstellen", use_container_width=True):
     loaded = pd.read_csv(bk_file)
-    for col in COLUMNS:
-        if col not in loaded.columns:
-            loaded[col] = 0.0 if "($)" in col or "(%)" in col else "-"
-    save_trades(loaded[COLUMNS])
-    st.rerun()
-
-if bk_file and st.sidebar.button("📂 Backup wiederherstellen", use_container_width=True):
-    loaded = pd.read_csv(bk_file)
-    if "Aktien-Erlös ($)" not in loaded.columns:
-        loaded["Aktien-Erlös ($)"] = 0.0
     save_trades(loaded)
-    st.rerun()
+    st.sidebar.success("✅ Backup geladen!")
 
 df = st.session_state.trades_df.copy()
 if not df.empty:
-    if "Aktien-Erlös ($)" not in df.columns:
-        df["Aktien-Erlös ($)"] = 0.0
     df["Netto-GuV ($)"] = pd.to_numeric(df["Netto-GuV ($)"], errors="coerce").fillna(0.0)
     df["Aktien-Erlös ($)"] = pd.to_numeric(df["Aktien-Erlös ($)"], errors="coerce").fillna(0.0)
     df["Gebühren ($)"] = pd.to_numeric(df["Gebühren ($)"], errors="coerce").fillna(0.0)
@@ -215,3 +205,4 @@ c4.metric("⏳ Gebundene Prämie", f"{df[df['Status'] == 'Offen']['Netto-GuV ($)
 closed = df[df["Status"] != "Offen"] if not df.empty else pd.DataFrame()
 c5.metric("🎯 Trefferquote", f"{(len(closed[closed['Netto-GuV ($)'] > 0]) / len(closed) * 100) if len(closed) > 0 else 0.0:.1f} %")
 
+st.divider()
